@@ -1,18 +1,51 @@
-const express = require('express');
-const cors = require('cors');
+const express = require("express");
+const cors = require("cors");
+let pipe = null;
 const app = express();
 app.use(cors());
 app.use(express.json());
+
 let memories = [];
 
-app.get('/', (req,res) => res.json({ name:"AI-Bridge API Render", status:"live", endpoints:"GET /api, POST /api" }));
-app.get('/api', (req,res) => res.json({ name:"AI-Bridge API", status:"live - Render", count: memories.length, memories, time: new Date().toISOString() }));
-app.post('/api', (req,res) => {
-  const { text, embedding } = req.body;
-  if(!text) return res.status(400).json({error:"text required"});
-  const m = { id: Date.now(), text, embedding: embedding||null, created: new Date().toISOString() };
-  memories.push(m);
-  res.json({ ok:true, saved:m, count: memories.length });
+async function getEmbedding(text) {
+  if (!pipe) {
+    const { pipeline } = await import("@xenova/transformers");
+    pipe = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  }
+  const output = await pipe(text, { pooling: 'mean', normalize: true });
+  return Array.from(output.data);
+}
+
+app.get("/", (req, res) => res.send("AI-Bridge Render LIVE - Free Embedding"));
+
+app.get("/api/", (req, res) => {
+  res.json({ name: "AI-Bridge API", status: "live - Render - FREE embeddings", count: memories.length, memories, time: new Date().toISOString() });
 });
+
+app.post("/api/", async (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: "text required" });
+  try {
+    const embedding = await getEmbedding(text);
+    const item = { id: Date.now(), text, embedding, created: new Date().toISOString() };
+    memories.push(item);
+    res.json({ ok: true, saved: item, count: memories.length });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/search", async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ error: "query required" });
+  const qEmb = await getEmbedding(query);
+  const scored = memories.map(m => {
+    let dot = 0; for(let i=0;i<qEmb.length;i++) dot+= qEmb[i]*m.embedding[i];
+    return { ...m, score: dot };
+  }).sort((a,b)=>b.score-a.score).slice(0,5);
+  res.json({ query, results: scored });
+});
+
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Live on ${PORT}`));
+app.listen(PORT, () => console.log("Live on "+PORT));
