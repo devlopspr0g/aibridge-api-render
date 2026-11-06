@@ -16,10 +16,11 @@ async function getEmbedding(text) {
   return Array.from(output.data);
 }
 
-app.get("/", (req, res) => res.send("AI-Bridge Render LIVE - Free Embedding"));
+app.get("/", (req, res) => res.send("AI-Bridge Render LIVE - Free Embedding - Clean"));
 
 app.get("/api/", (req, res) => {
-  res.json({ name: "AI-Bridge API", status: "live - Render - FREE embeddings", count: memories.length, memories, time: new Date().toISOString() });
+  const clean = memories.map(({id,text,created})=>({id,text,created}));
+  res.json({ name: "AI-Bridge API", status: "live - Render - FREE embeddings - Clean", count: memories.length, memories: clean, time: new Date().toISOString() });
 });
 
 app.post("/api/", async (req, res) => {
@@ -29,7 +30,7 @@ app.post("/api/", async (req, res) => {
     const embedding = await getEmbedding(text);
     const item = { id: Date.now(), text, embedding, created: new Date().toISOString() };
     memories.push(item);
-    res.json({ ok: true, saved: item, count: memories.length });
+    res.json({ ok: true, saved: { id: item.id, text: item.text, created: item.created }, count: memories.length });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -39,13 +40,14 @@ app.post("/api/", async (req, res) => {
 app.post("/api/search", async (req, res) => {
   const { query } = req.body;
   if (!query) return res.status(400).json({ error: "query required" });
+  if (memories.length === 0) return res.json({ query, results: [] });
   const qEmb = await getEmbedding(query);
   const scored = memories.map(m => {
     let dot = 0; for(let i=0;i<qEmb.length;i++) dot+= qEmb[i]*m.embedding[i];
-    return { ...m, score: dot };
+    return { id: m.id, text: m.text, created: m.created, score: Number(dot.toFixed(4)) };
   }).sort((a,b)=>b.score-a.score).slice(0,5);
   res.json({ query, results: scored });
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("Live on "+PORT));
+app.listen(PORT, () => console.log("Live Clean on "+PORT));
