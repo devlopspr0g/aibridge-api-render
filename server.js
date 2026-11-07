@@ -1,12 +1,15 @@
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
-let pipe = null;
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const FILE = "./memories.json";
+let pipe = null;
+
+// Load memories from file
 let memories = [];
 try { 
   if (fs.existsSync(FILE)) {
@@ -53,11 +56,25 @@ app.post("/api/search", async (req, res) => {
   try {
     const qEmb = await getEmbedding(query);
     const scored = memories.map(m => {
+      if(!m.embedding) return { id:m.id, text:m.text, created:m.created, score:0 };
       let dot=0; for(let i=0;i<qEmb.length;i++) dot+= qEmb[i]*m.embedding[i];
       return { id:m.id, text:m.text, created:m.created, score:Number(dot.toFixed(4)) };
     }).sort((a,b)=>b.score-a.score).slice(0,5);
     res.json({ query, results: scored });
   } catch(e){ res.status(500).json({ error: e.message }) }
+});
+
+// SYNC LOGIC - pushes memories.json to Supabase (optional, for backup)
+app.post("/api/sync", async (req, res) => {
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+    const { error } = await supabase.from('memories').upsert(memories, { onConflict: 'id' });
+    if (error) throw error;
+    res.json({ ok: true, synced: memories.length });
+  } catch(e){ 
+    res.status(500).json({ error: "Set SUPABASE_URL and SUPABASE_KEY in Render env vars - " + e.message }) 
+  }
 });
 
 const PORT = process.env.PORT || 10000;
