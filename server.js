@@ -1,52 +1,69 @@
-// aibridge-api-render / server.js - COMPLETE
-import express from "express";
-import cors from "cors";
-import fs from "fs";
+import express from 'express';
+import cors from 'cors';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const FILE = "./memories.json";
-if (!fs.existsSync(FILE)) fs.writeFileSync(FILE, "[]");
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-function getMemories() {
-  return JSON.parse(fs.readFileSync(FILE, "utf8"));
+// ROOT
+app.get('/', (req,res) => {
+  res.send('AI-Bridge Render LIVE - Persistent - FREE - Clean');
+});
+
+// AUTH middleware
+async function auth(req,res,next){
+  const key = req.headers['x-api-key'];
+  if(!key) return res.status(401).json({error:'Missing API key'});
+  const { data } = await supabase.from('api_keys').select('user_id').eq('key', key).single();
+  if(!data) return res.status(401).json({error:'Invalid API key'});
+  req.user_id = data.user_id;
+  next();
 }
-function saveMemories(m) {
-  fs.writeFileSync(FILE, JSON.stringify(m, null, 2));
-}
 
-app.get("/", (req, res) => {
-  res.send("AI-Bridge Render LIVE - Persistent - FREE - Clean");
+// GET memories - supports all 6 tables
+app.get('/api/memories', auth, async (req,res) => {
+  const { data, error } = await supabase
+    .from('memories')
+    .select('*')
+    .eq('user_id', req.user_id)
+    .order('created_at', {ascending:false})
+    .limit(100);
+  if(error) return res.status(500).json({error:error.message});
+  res.json(data || []);
 });
 
-// Get all
-app.get("/api/", (req, res) => {
-  const mems = getMemories();
-  res.json({ count: mems.length, memories: mems });
+// POST memory
+app.post('/api/memories', auth, async (req,res) => {
+  const { content, type, title } = req.body;
+  const table = type || 'memories';
+  const allowed = ['memories','businesses','contacts','tasks','goals','facts'];
+  const targetTable = allowed.includes(table) ? table : 'memories';
+  
+  const { data, error } = await supabase
+    .from(targetTable)
+    .insert([{ user_id: req.user_id, content, title: title || content?.slice(0,50) }])
+    .select();
+  if(error) return res.status(500).json({error:error.message});
+  res.json(data);
 });
 
-// Save
-app.post("/api/", (req, res) => {
-  const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "text required" });
-  const mems = getMemories();
-  const item = { id: Date.now().toString(), text, created: new Date().toISOString() };
-  mems.push(item);
-  saveMemories(mems);
-  res.json({ ok: true, saved: item });
+// Search across 6 tables
+app.get('/api/search', auth, async (req,res) => {
+  const q = req.query.q || '';
+  if(!q) return res.json([]);
+  const tables = ['memories','businesses','contacts','tasks','goals','facts'];
+  let results = [];
+  for(const t of tables){
+    const { data } = await supabase.from(t).select('*').eq('user_id', req.user_id).ilike('content', `%${q}%`).limit(10);
+    if(data) results = results.concat(data.map(d=>({...d, _table:t})));
+  }
+  res.json(results);
 });
 
-// Search - THIS WAS MISSING
-app.post("/api/search", (req, res) => {
-  const { query } = req.body;
-  const mems = getMemories();
-  if (!query) return res.json({ results: mems });
-  const q = query.toLowerCase();
-  const results = mems.filter(m => m.text.toLowerCase().includes(q));
-  res.json({ results });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("LIVE on", PORT));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, ()=>console.log('LIVE on '+PORT));
